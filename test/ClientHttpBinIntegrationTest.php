@@ -214,6 +214,8 @@ class ClientHttpBinIntegrationTest extends AsyncTestCase
 
     public function testHttp2Push(): void
     {
+        $this->markTestSkipped('3rd-party service no longer available');
+
         $eventListener = $this->createMock(EventListener::class);
         $eventListener->expects($this->exactly(2))->method('requestStart');
         $eventListener->expects($this->exactly(2))->method('requestEnd');
