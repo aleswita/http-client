@@ -99,7 +99,7 @@ final class Http1Parser
     /**
      * @throws ParseException
      */
-    public function parse(string $data = null): ?Response
+    public function parse(?string $data = null): ?Response
     {
         if ($data !== null && $data !== '') {
             $this->buffer .= $data;
