@@ -409,11 +409,9 @@ final class Http2ConnectionProcessor implements Http2Processor
         $cancellation = $deferredCancellation->getCancellation();
         $body = new ResponseBodyStream(new ReadableIterableStream($iterator), $deferredCancellation);
 
-        $cancellationId = $cancellation->subscribe(function (CancelledException $exception) use ($streamId): void {
-            if (isset($this->streams[$streamId])) {
-                $this->releaseStream($streamId, $exception, false);
-            }
-        });
+        $cancellationId = $cancellation->subscribe(
+            fn (CancelledException $exception) => $this->releaseStream($streamId, $exception, false),
+        );
 
         $trailers
             ->finally(static fn () => $cancellation->unsubscribe($cancellationId))
@@ -678,13 +676,9 @@ final class Http2ConnectionProcessor implements Http2Processor
         }
 
         EventLoop::queue(function () use ($pushId, $deferredCancellation, $stream, $cancellation): void {
-            $cancellationId = $cancellation->subscribe(function (CancelledException $exception) use (
-                $pushId
-            ): void {
-                if (isset($this->streams[$pushId])) {
-                    $this->releaseStream($pushId, $exception, false);
-                }
-            });
+            $cancellationId = $cancellation->subscribe(
+                fn (CancelledException $exception) => $this->releaseStream($pushId, $exception, false),
+            );
 
             $onPush = $stream->request->getPushHandler();
 
@@ -750,9 +744,7 @@ final class Http2ConnectionProcessor implements Http2Processor
 
         $exception = new SocketException($exception->getMessage(), $code, $exception);
 
-        if (isset($this->streams[$id])) {
-            $this->releaseStream($id, $exception, $code === Http2Parser::REFUSED_STREAM);
-        }
+        $this->releaseStream($id, $exception, $code === Http2Parser::REFUSED_STREAM);
     }
 
     public function handleConnectionException(Http2ConnectionException $exception): void
@@ -986,11 +978,9 @@ final class Http2ConnectionProcessor implements Http2Processor
             $this->initialWindowSize,
         );
 
-        $cancellationId = $cancellation->subscribe(function (CancelledException $exception) use ($streamId): void {
-            if (isset($this->streams[$streamId])) {
-                $this->releaseStream($streamId, $exception, false);
-            }
-        });
+        $cancellationId = $cancellation->subscribe(
+            fn (CancelledException $exception) => $this->releaseStream($streamId, $exception, false),
+        );
 
         \assert($http2stream->trailers !== null);
         $http2stream->trailers->getFuture()
@@ -1070,9 +1060,7 @@ final class Http2ConnectionProcessor implements Http2Processor
                 $http2stream->requestBodyCompletion->error($exception);
             }
 
-            if (isset($this->streams[$streamId])) {
-                $this->releaseStream($streamId, $exception, false);
-            }
+            $this->releaseStream($streamId, $exception, false);
 
             throw $exception;
         }
@@ -1328,9 +1316,10 @@ final class Http2ConnectionProcessor implements Http2Processor
 
     private function releaseStream(int $streamId, ?\Throwable $exception, bool $unprocessed): void
     {
-        \assert(isset($this->streams[$streamId]));
-
-        $stream = $this->streams[$streamId];
+        $stream = $this->streams[$streamId] ?? null;
+        if (!$stream) {
+            return;
+        }
 
         unset($this->streams[$streamId]);
 
