@@ -4,11 +4,10 @@ namespace Amp\Http\Client\Internal;
 
 use Amp\ByteStream\ReadableStream;
 use Amp\ByteStream\ReadableStreamIteratorAggregate;
+use Amp\ByteStream\StreamException;
 use Amp\Cancellation;
 use Amp\ForbidCloning;
 use Amp\ForbidSerialization;
-use Amp\Http\Client\ParseException;
-use Amp\Http\HttpStatus;
 
 /**
  * @internal
@@ -41,12 +40,11 @@ final class SizeLimitingReadableStream implements ReadableStream, \IteratorAggre
         if ($chunk !== null) {
             $this->bytesRead += \strlen($chunk);
             if ($this->bytesRead > $this->sizeLimit) {
-                $this->exception = new ParseException(
-                    "Configured body size exceeded: {$this->bytesRead} bytes received, while the configured limit is {$this->sizeLimit} bytes",
-                    HttpStatus::PAYLOAD_TOO_LARGE
-                );
-
                 $this->source->close();
+
+                throw $this->exception = new StreamException(
+                    "Configured body size exceeded: {$this->bytesRead} bytes received, while the configured limit is {$this->sizeLimit} bytes",
+                );
             }
         }
 
