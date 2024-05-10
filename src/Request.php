@@ -40,8 +40,10 @@ final class Request extends HttpRequest
 
     private float $inactivityTimeout = 10;
 
+    /** @var non-negative-int */
     private int $bodySizeLimit = self::DEFAULT_BODY_SIZE_LIMIT;
 
+    /** @var non-negative-int */
     private int $headerSizeLimit = self::DEFAULT_HEADER_SIZE_LIMIT;
 
     /** @var null|\Closure(Request, Future): void */
@@ -344,9 +346,12 @@ final class Request extends HttpRequest
         return $this->tcpConnectTimeout;
     }
 
+    /**
+     * Set the timeout in seconds for establishing the TCP connection. Use 0 for no timeout.
+     */
     public function setTcpConnectTimeout(float $tcpConnectTimeout): void
     {
-        $this->tcpConnectTimeout = $tcpConnectTimeout;
+        $this->tcpConnectTimeout = \max(0, $tcpConnectTimeout);
     }
 
     /**
@@ -357,22 +362,29 @@ final class Request extends HttpRequest
         return $this->tlsHandshakeTimeout;
     }
 
+    /**
+     * Set the timeout in seconds for the TLS handshake. Use 0 for no timeout.
+     */
     public function setTlsHandshakeTimeout(float $tlsHandshakeTimeout): void
     {
-        $this->tlsHandshakeTimeout = $tlsHandshakeTimeout;
+        $this->tlsHandshakeTimeout = \max(0, $tlsHandshakeTimeout);
     }
 
     /**
-     * @return float Timeout in seconds for the HTTP transfer (not counting TCP connect and TLS handshake)
+     * @return float Timeout in seconds for the HTTP transfer (not counting TCP connect and TLS handshake).
      */
     public function getTransferTimeout(): float
     {
         return $this->transferTimeout;
     }
 
+    /**
+     * @param float $transferTimeout The timeout in seconds for the entire HTTP request transfer. Use 0 for no
+     *      transfer timeout.
+     */
     public function setTransferTimeout(float $transferTimeout): void
     {
-        $this->transferTimeout = $transferTimeout;
+        $this->transferTimeout = \max(0, $transferTimeout);
     }
 
     /**
@@ -383,29 +395,47 @@ final class Request extends HttpRequest
         return $this->inactivityTimeout;
     }
 
+    /**
+     * @param float $inactivityTimeout The timeout in seconds since the last data was received before the request
+     *      fails due to inactivity. Use 0 for no inactivity timeout.
+     */
     public function setInactivityTimeout(float $inactivityTimeout): void
     {
-        $this->inactivityTimeout = $inactivityTimeout;
+        $this->inactivityTimeout = \max(0, $inactivityTimeout);
     }
 
+    /**
+     * @return non-negative-int Size limit of the response headers. Applies only to HTTP/1.x requests.
+     *      0 indicates no limit.
+     */
     public function getHeaderSizeLimit(): int
     {
         return $this->headerSizeLimit;
     }
 
+    /**
+     * @param int $headerSizeLimit The size limit of response headers. Applies only to HTTP/1.x requests.
+     *      Use 0 for no limit. Default is 16 KiB.
+     */
     public function setHeaderSizeLimit(int $headerSizeLimit): void
     {
-        $this->headerSizeLimit = $headerSizeLimit;
+        $this->headerSizeLimit = \max(0, $headerSizeLimit);
     }
 
+    /**
+     * @return int Size limit of the response body. 0 indicates no limit.
+     */
     public function getBodySizeLimit(): int
     {
         return $this->bodySizeLimit;
     }
 
+    /**
+     * @param int $bodySizeLimit The size limit of the response body. Use 0 for no limit. Default is 10 MiB.
+     */
     public function setBodySizeLimit(int $bodySizeLimit): void
     {
-        $this->bodySizeLimit = $bodySizeLimit;
+        $this->bodySizeLimit = \max(0, $bodySizeLimit);
     }
 
     /**
