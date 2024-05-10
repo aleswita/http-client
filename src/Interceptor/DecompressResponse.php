@@ -53,10 +53,14 @@ final class DecompressResponse implements NetworkInterceptor
     private function decompressResponse(Response $response): Response
     {
         if (($encoding = $this->determineCompressionEncoding($response))) {
-            $sizeLimit = $response->getRequest()->getBodySizeLimit();
-            $decompressedBody = new DecompressingReadableStream($response->getBody(), $encoding);
+            $stream = new DecompressingReadableStream($response->getBody(), $encoding);
 
-            $response->setBody(new SizeLimitingReadableStream($decompressedBody, $sizeLimit));
+            $sizeLimit = $response->getRequest()->getBodySizeLimit();
+            if ($sizeLimit > 0) {
+                $stream = new SizeLimitingReadableStream($stream, $sizeLimit);
+            }
+
+            $response->setBody($stream);
             $response->removeHeader('content-encoding');
         }
 
