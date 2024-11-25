@@ -1,5 +1,4 @@
 <?php declare(strict_types=1);
-/** @noinspection PhpUnhandledExceptionInspection */
 
 namespace Amp\Http\Client\Connection;
 
@@ -19,6 +18,7 @@ use Amp\Http\HttpStatus;
 use Amp\NullCancellation;
 use Amp\PHPUnit\AsyncTestCase;
 use Amp\Socket;
+use Amp\Socket\ResourceSocket;
 use Amp\TimeoutCancellation;
 use Laminas\Diactoros\Uri as LaminasUri;
 use League\Uri;
@@ -30,34 +30,47 @@ use function Amp\Http\formatDateHeader;
 
 class Http2ConnectionTest extends AsyncTestCase
 {
-    public static function packFrame(string $data, int $type, int $flags, int $stream = 0): string
-    {
+    private HPack $hpack;
+
+    private ResourceSocket $server;
+    private ResourceSocket $client;
+    private Http2Connection $connection;
+
+    public static function packFrame(
+        string $data,
+        int $type,
+        int $flags = Http2Parser::NO_FLAG,
+        int $stream = 0,
+    ): string {
         return Http2Parser::compileFrame($data, $type, $flags, $stream);
+    }
+
+    public function setUp(): void
+    {
+        parent::setUp();
+
+        $this->hpack = new HPack();
+
+        [$this->server, $this->client] = Socket\createSocketPair();
+
+        $this->connection = new Http2Connection($this->client, 0, null);
+        $this->server->write(self::packFrame('', Http2Parser::SETTINGS, 0));
+        $this->connection->initialize();
     }
 
     public function test100Continue(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
 
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        $server->write(self::packFrame($hpack->encode([
+        $this->server->write(self::packFrame($this->hpack->encode([
             [":status", (string) HttpStatus::CONTINUE],
             ["date", formatDateHeader()],
         ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS, 1));
 
-        $server->write(self::packFrame($hpack->encode([
+        $this->server->write(self::packFrame($this->hpack->encode([
             [":status", (string) HttpStatus::NO_CONTENT],
             ["date", formatDateHeader()],
         ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS | Http2Parser::END_STREAM, 1));
@@ -69,24 +82,14 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testSwitchingProtocols(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
 
         events()->requestStart($request);
 
         /** @var Stream $stream */
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        $server->write(self::packFrame($hpack->encode([
+        $this->server->write(self::packFrame($this->hpack->encode([
             [":status", (string) HttpStatus::SWITCHING_PROTOCOLS],
             ["date", formatDateHeader()],
         ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS, 1));
@@ -99,26 +102,16 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testTrailers(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
 
         events()->requestStart($request);
 
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        EventLoop::queue(static function () use ($server, $hpack): void {
+        EventLoop::queue(function (): void {
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "4"],
                 ["trailers", "Foo"],
@@ -127,11 +120,11 @@ class Http2ConnectionTest extends AsyncTestCase
 
             delay(0.1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, 0, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, 0, 1));
 
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 ["foo", 'bar'],
             ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS | Http2Parser::END_STREAM, 1));
         });
@@ -148,29 +141,19 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testTrailersWithoutTrailers(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
 
         events()->requestStart($request);
 
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        $server->write(self::packFrame($hpack->encode([
+        $this->server->write(self::packFrame($this->hpack->encode([
             [":status", (string) HttpStatus::OK],
             ["content-length", "4"],
             ["date", formatDateHeader()],
         ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS, 1));
 
-        $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
+        $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
 
         $response = $stream->request($request, new NullCancellation);
 
@@ -183,26 +166,16 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testCancellingWhileStreamingBody(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
 
         events()->requestStart($request);
 
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        EventLoop::queue(static function () use ($server, $hpack) {
+        EventLoop::queue(function (): void {
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "8"],
                 ["date", formatDateHeader()],
@@ -210,11 +183,11 @@ class Http2ConnectionTest extends AsyncTestCase
 
             delay(0.1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
 
             delay(1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
         });
 
         $response = $stream->request($request, new TimeoutCancellation(0.5));
@@ -226,7 +199,7 @@ class Http2ConnectionTest extends AsyncTestCase
             self::fail("The request body should have been cancelled");
         } catch (CancelledException $exception) {
             delay(0.01); // Allow frame queue to complete writing.
-            $buffer = $server->read();
+            $buffer = $this->server->read();
             $expected = \bin2hex(self::packFrame(
                 \pack("N", Http2Parser::CANCEL),
                 Http2Parser::RST_STREAM,
@@ -239,27 +212,17 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testTimeoutWhileStreamingBody(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
         $request->setTransferTimeout(0.5);
 
         events()->requestStart($request);
 
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        EventLoop::queue(static function () use ($server, $hpack) {
+        EventLoop::queue(function (): void {
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "8"],
                 ["date", formatDateHeader()],
@@ -267,11 +230,11 @@ class Http2ConnectionTest extends AsyncTestCase
 
             delay(0.1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
 
             delay(1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
         });
 
         $response = $stream->request($request, new NullCancellation);
@@ -283,7 +246,7 @@ class Http2ConnectionTest extends AsyncTestCase
             self::fail("The request body should have been cancelled");
         } catch (StreamException $exception) {
             delay(0.01); // Allow frame queue to complete writing.
-            $buffer = $server->read();
+            $buffer = $this->server->read();
             $expected = \bin2hex(self::packFrame(
                 \pack("N", Http2Parser::CANCEL),
                 Http2Parser::RST_STREAM,
@@ -296,16 +259,6 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testCancellingPushPromiseBody(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('https://localhost/');
 
         $request->setPushHandler(function (Request $request, Future $future) use (&$pushPromise): void {
@@ -315,25 +268,25 @@ class Http2ConnectionTest extends AsyncTestCase
 
         events()->requestStart($request);
 
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        EventLoop::queue(static function () use ($server, $hpack) {
+        EventLoop::queue(function (): void {
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "4"],
                 ["date", formatDateHeader()],
             ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS, 1));
 
-            $server->write(self::packFrame(\pack("N", 2) . $hpack->encode([
+            $this->server->write(self::packFrame(\pack("N", 2) . $this->hpack->encode([
                     [":method", 'GET'],
                     [":authority", 'localhost'],
                     [":scheme", 'https'],
                     [":path", '/static'],
                 ]), Http2Parser::PUSH_PROMISE, Http2Parser::END_HEADERS, 1));
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "4"],
                 ["date", formatDateHeader()],
@@ -341,11 +294,11 @@ class Http2ConnectionTest extends AsyncTestCase
 
             delay(0.1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
 
             delay(1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 2));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 2));
         });
 
         $request->setTransferTimeout(0.5);
@@ -365,7 +318,7 @@ class Http2ConnectionTest extends AsyncTestCase
             self::fail("The push promise body should have been cancelled");
         } catch (CancelledException $exception) {
             delay(0.01); // Allow frame queue to complete writing.
-            $buffer = $server->read();
+            $buffer = $this->server->read();
             $expected = \bin2hex(self::packFrame(
                 \pack("N", Http2Parser::CANCEL),
                 Http2Parser::RST_STREAM,
@@ -378,26 +331,16 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testInactivityWhileStreamingBody(): void
     {
-        $hpack = new HPack;
-
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
         $request->setInactivityTimeout(0.5);
 
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        EventLoop::queue(static function () use ($server, $hpack) {
+        EventLoop::queue(function (): void {
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "8"],
                 ["date", formatDateHeader()],
@@ -405,11 +348,11 @@ class Http2ConnectionTest extends AsyncTestCase
 
             delay(0.1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
 
             delay(1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
         });
 
         $response = $stream->request($request, new NullCancellation);
@@ -421,7 +364,7 @@ class Http2ConnectionTest extends AsyncTestCase
             self::fail("The request body should have been cancelled");
         } catch (StreamException $exception) {
             delay(0.01); // Allow frame queue to complete writing.
-            $buffer = $server->read();
+            $buffer = $this->server->read();
             $expected = \bin2hex(self::packFrame(
                 \pack("N", Http2Parser::CANCEL),
                 Http2Parser::RST_STREAM,
@@ -434,17 +377,11 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testWritingRequestWithRelativeUriPathFails(): void
     {
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-        $server->write($frame = self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-        $connection->initialize();
-
         $request = new Request(new LaminasUri('foo'));
         $request->setInactivityTimeout(0.5);
 
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
         $this->expectException(InvalidRequestException::class);
         $this->expectExceptionMessage('Relative path (foo) is not allowed in the request URI');
@@ -454,31 +391,25 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testServerPushingOddStream(): void
     {
-        [$server, $client] = Socket\createSocketPair();
-
-        $hpack = new HPack;
-
-        $connection = new Http2Connection($client, 0, null);
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0, 0));
-        $connection->initialize();
+        $this->hpack = new HPack;
 
         $request = new Request('http://localhost/');
         $request->setInactivityTimeout(0.5);
         $request->setPushHandler($this->createCallback(0));
 
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
         $future = async(fn () => $stream->request($request, new NullCancellation));
 
-        $server->write(self::packFrame($hpack->encode([
+        $this->server->write(self::packFrame($this->hpack->encode([
             [":status", (string) HttpStatus::OK],
             ["date", formatDateHeader()],
         ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS, 1));
 
         delay(0.01);
 
-        $server->write(self::packFrame(\pack("N", 3) . $hpack->encode([
+        $this->server->write(self::packFrame(\pack("N", 3) . $this->hpack->encode([
                 [":method", 'GET'],
                 [":authority", 'localhost'],
                 [":scheme", 'http'],
@@ -495,20 +426,18 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testServerStreamRefuse(): void
     {
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0));
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        async(static function () use ($server) {
+        async(function () {
             delay(0.1);
 
-            $server->write(self::packFrame(\pack("N", Http2Parser::REFUSED_STREAM), Http2Parser::RST_STREAM, Http2Parser::NO_FLAG, 1));
+            $this->server->write(self::packFrame(
+                data: \pack("N", Http2Parser::REFUSED_STREAM),
+                type: Http2Parser::RST_STREAM,
+                stream: 1,
+            ));
         });
 
         try {
@@ -533,22 +462,16 @@ class Http2ConnectionTest extends AsyncTestCase
         string $requestPath,
         string $expectedPath
     ): void {
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-        $server->write($frame = self::packFrame('', Http2Parser::SETTINGS, 0));
-        $connection->initialize();
-
         $uri = Uri\Http::createFromString('http://localhost')->withPath($requestPath);
         $request = new Request($uri);
         $request->setInactivityTimeout(0.5);
 
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
         $future = async(fn () => $stream->request($request, new NullCancellation));
-        $data = \substr($server->read(), \strlen(Http2Parser::PREFACE)); // cut off the HTTP/2 preface
-        $data .= $server->read(); // Second read for header frame.
+        $data = \substr($this->server->read(), \strlen(Http2Parser::PREFACE)); // cut off the HTTP/2 preface
+        $data .= $this->server->read(); // Second read for header frame.
         $processor = $this->createMock(Http2Processor::class);
         $expectedPseudo = [
             ':authority' => 'localhost',
@@ -566,7 +489,7 @@ class Http2ConnectionTest extends AsyncTestCase
         try {
             $future->await();
         } catch (HttpException $exception) {
-            $connection->close();
+            $this->connection->close();
         }
     }
 
@@ -580,22 +503,14 @@ class Http2ConnectionTest extends AsyncTestCase
 
     public function testServerAbruptDisconnect(): void
     {
-        [$server, $client] = Socket\createSocketPair();
-
-        $connection = new Http2Connection($client, 0, null);
-        $server->write(self::packFrame('', Http2Parser::SETTINGS, 0));
-        $connection->initialize();
-
         $request = new Request('http://localhost/');
         events()->requestStart($request);
-        $stream = $connection->getStream($request);
+        $stream = $this->connection->getStream($request);
 
-        EventLoop::queue(static function () use ($server): void {
-            $hpack = new HPack();
-
+        EventLoop::queue(function (): void {
             delay(0.1);
 
-            $server->write(self::packFrame($hpack->encode([
+            $this->server->write(self::packFrame($this->hpack->encode([
                 [":status", (string) HttpStatus::OK],
                 ["content-length", "8"],
                 ["date", formatDateHeader()],
@@ -603,9 +518,9 @@ class Http2ConnectionTest extends AsyncTestCase
 
             delay(0.1);
 
-            $server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::NO_FLAG, 1));
 
-            $server->close();
+            $this->server->close();
         });
 
         $response = $stream->request($request, new NullCancellation);
@@ -620,6 +535,56 @@ class Http2ConnectionTest extends AsyncTestCase
             $previous = $exception->getPrevious();
             self::assertInstanceOf(SocketException::class, $previous);
             self::assertStringContainsString('closed unexpectedly', $previous->getMessage());
+        }
+    }
+
+    public function testServerGoAwayFrame(): void
+    {
+        $request1 = new Request('http://localhost/');
+        events()->requestStart($request1);
+        $stream1 = $this->connection->getStream($request1);
+
+        $request2 = new Request('http://localhost/');
+        events()->requestStart($request2);
+        $stream2 = $this->connection->getStream($request2);
+
+        $response1Future = async(fn () => $stream1->request($request1, new NullCancellation));
+        $response2Future = async(fn () => $stream2->request($request2, new NullCancellation));
+
+        EventLoop::queue(function (): void {
+            $this->server->write(self::packFrame($this->hpack->encode([
+                [":status", (string) HttpStatus::OK],
+                ["content-length", "4"],
+                ["date", formatDateHeader()],
+            ]), Http2Parser::HEADERS, Http2Parser::END_HEADERS, 1));
+
+            delay(0.1);
+
+            $this->server->write(self::packFrame(
+                data: \pack('N*', 1, Http2Parser::GRACEFUL_SHUTDOWN),
+                type: Http2Parser::GOAWAY,
+            ));
+
+            delay(0.1);
+
+            $this->server->write(self::packFrame('test', Http2Parser::DATA, Http2Parser::END_STREAM, 1));
+
+            delay(0.1);
+
+            $this->server->close();
+        });
+
+        $response1 = $response1Future->await();
+        self::assertSame(200, $response1->getStatus());
+        self::assertSame('test', $response1->getBody()->buffer());
+
+        $this->expectException(SocketException::class);
+        $this->expectExceptionMessage('Received GOAWAY frame');
+
+        try {
+            $response2 = $response2Future->await();
+        } finally {
+            $this->connection->close();
         }
     }
 }

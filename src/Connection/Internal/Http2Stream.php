@@ -40,7 +40,7 @@ final class Http2Stream
     /** @var int Bytes received on the stream. */
     public int $received = 0;
 
-    public int $bufferSize;
+    public int $bufferSize = 0;
 
     public string $requestBodyBuffer = '';
 
@@ -68,7 +68,6 @@ final class Http2Stream
         $this->pendingResponse = new DeferredFuture();
         $this->requestBodyCompletion = new DeferredFuture();
         $this->body = new Queue();
-        $this->bufferSize = 0;
 
         // Trailers future may never be exposed to the user if the request fails, so ignore.
         $this->trailers = new DeferredFuture();

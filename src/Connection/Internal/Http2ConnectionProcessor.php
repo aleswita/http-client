@@ -98,7 +98,7 @@ final class Http2ConnectionProcessor implements Http2Processor
 
     private bool $hasWriteError = false;
 
-    private int|null $shutdown = null;
+    private ?int $shutdown = null;
 
     private readonly Queue $frameQueue;
 
@@ -1073,6 +1073,8 @@ final class Http2ConnectionProcessor implements Http2Processor
 
     private function runReadFiber(): void
     {
+        $parser = new Http2Parser($this, $this->hpack);
+
         try {
             $this->frameQueue->push(Http2Parser::PREFACE);
 
@@ -1090,19 +1092,7 @@ final class Http2ConnectionProcessor implements Http2Processor
                     self::DEFAULT_MAX_FRAME_SIZE
                 )
             )->await();
-        } catch (\Throwable $exception) {
-            $this->shutdown(new SocketException(
-                "The HTTP/2 connection closed" . ($this->shutdown !== null ? ' unexpectedly' : ''),
-                $this->shutdown ?? Http2Parser::GRACEFUL_SHUTDOWN,
-                $exception,
-            ), 0);
 
-            return;
-        }
-
-        $parser = new Http2Parser($this, $this->hpack);
-
-        try {
             while (null !== $chunk = $this->socket->read()) {
                 $parser->push($chunk);
             }
@@ -1113,13 +1103,24 @@ final class Http2ConnectionProcessor implements Http2Processor
                 Http2Parser::INTERNAL_ERROR,
                 $exception,
             ));
-
-            return;
         } finally {
             $parser->cancel();
-        }
 
-        $this->shutdown();
+            $this->cancelPongWatcher(false);
+
+            if ($this->onClose !== null) {
+                $onClose = $this->onClose;
+                $this->onClose = null;
+
+                foreach ($onClose as $callback) {
+                    EventLoop::queue($callback);
+                }
+            }
+
+            $this->frameQueue->complete();
+
+            $this->shutdown();
+        }
     }
 
     private function writeFrame(
@@ -1128,7 +1129,7 @@ final class Http2ConnectionProcessor implements Http2Processor
         int $stream = 0,
         string $data = ''
     ): Future {
-        if ($this->shutdown !== null) {
+        if ($this->frameQueue->isComplete()) {
             return Future::complete();
         }
 
@@ -1367,7 +1368,16 @@ final class Http2ConnectionProcessor implements Http2Processor
             }
         }
 
-        if (!$this->streams && !$this->socket->isClosed() && $this->socket instanceof ResourceStream) {
+        if ($this->streams) {
+            return;
+        }
+
+        if ($this->shutdown !== null) {
+            $this->socket->close();
+            return;
+        }
+
+        if ($this->socket instanceof ResourceStream) {
             $this->socket->unreference();
         }
     }
@@ -1406,8 +1416,7 @@ final class Http2ConnectionProcessor implements Http2Processor
 
     /**
      * @param HttpException|null $reason Shutdown reason.
-     * @param int|null $lastId ID of last processed frame. Null to use the last opened frame ID or 0 if no
-     *                              streams have been opened.
+     * @param int|null $lastId ID of last processed frame if available.
      */
     private function shutdown(?HttpException $reason = null, ?int $lastId = null): void
     {
@@ -1427,47 +1436,40 @@ final class Http2ConnectionProcessor implements Http2Processor
             $this->settings = null;
         }
 
-        $exception = $reason;
-        foreach ($this->streams as $id => $stream) {
-            $unprocessed = $lastId !== null && $id > $lastId;
-
-            $this->releaseStream($id, $exception, $unprocessed);
-        }
-
         $previous = $reason->getPrevious();
         $previous = $previous instanceof Http2ConnectionException ? $previous : null;
 
         $code = $previous?->getCode() ?? Http2Parser::GRACEFUL_SHUTDOWN;
 
-        $message = match ($code) {
-            Http2Parser::PROTOCOL_ERROR,
-            Http2Parser::FLOW_CONTROL_ERROR,
-            Http2Parser::FRAME_SIZE_ERROR,
-            Http2Parser::COMPRESSION_ERROR,
-            Http2Parser::SETTINGS_TIMEOUT,
-            Http2Parser::ENHANCE_YOUR_CALM => $previous?->getMessage(),
-            default => null,
-        };
+        $this->shutdown = $code;
 
-        $this->writeFrame(Http2Parser::GOAWAY, data: \pack('N', $code) . $message)
-            ->finally($this->socket->close(...))
-            ->ignore();
+        if ($lastId === null) {
+            $message = match ($code) {
+                Http2Parser::PROTOCOL_ERROR,
+                Http2Parser::FLOW_CONTROL_ERROR,
+                Http2Parser::FRAME_SIZE_ERROR,
+                Http2Parser::COMPRESSION_ERROR,
+                Http2Parser::SETTINGS_TIMEOUT,
+                Http2Parser::ENHANCE_YOUR_CALM => $previous?->getMessage(),
+                default => null,
+            };
 
-        $this->cancelPongWatcher(false);
+            $this->writeFrame(Http2Parser::GOAWAY, data: \pack('NN', 0, $code) . $message)->ignore();
 
-        if ($this->onClose !== null) {
-            $onClose = $this->onClose;
-            $this->onClose = null;
-
-            foreach ($onClose as $callback) {
-                EventLoop::queue($callback);
+            foreach ($this->streams as $id => $stream) {
+                $this->releaseStream($id, $reason, unprocessed: false);
             }
+
+            return;
         }
 
-        $this->shutdown = $code;
-        $this->frameQueue->complete();
+        foreach ($this->streams as $id => $stream) {
+            if ($id <= $lastId) {
+                continue;
+            }
 
-        \assert(empty($this->streams), 'Streams array not empty after shutdown');
+            $this->releaseStream($id, $reason, unprocessed: true);
+        }
     }
 
     /**
