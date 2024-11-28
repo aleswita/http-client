@@ -10,6 +10,7 @@ use Amp\Http\Client\Response;
 use Amp\Http\Client\Trailers;
 use Amp\PHPUnit\AsyncTestCase;
 use Amp\Socket\InternetAddress;
+use PHPUnit\Framework\MockObject\MockObject;
 use Revolt\EventLoop;
 use function Amp\async;
 use function Amp\delay;
@@ -89,9 +90,21 @@ class ConnectionLimitingPoolTest extends AsyncTestCase
         $factory->expects(self::exactly(2))
             ->method('create')
             ->willReturnCallback(function () use ($connection): Connection {
-                delay(0.5);
+                static $count = 0;
+                if (!$count++) {
+                    return $connection;
+                }
+
+                delay(0.25);
+                $connection = $this->createMockConnection(new Request('http://localhost'));
+                $connection->expects(self::never())
+                    ->method('getStream');
+
                 return $connection;
             });
+
+        $connection->expects(self::exactly(2))
+            ->method('getStream');
 
         $pool = ConnectionLimitingPool::byAuthority(2, $factory);
 
@@ -99,7 +112,7 @@ class ConnectionLimitingPoolTest extends AsyncTestCase
             ->usingPool($pool)
             ->build();
 
-        $this->setTimeout(0.75);
+        $this->setTimeout(0.5);
 
         Future\await([
             async(fn () => $client->request(new Request('http://localhost'))),
@@ -145,7 +158,7 @@ class ConnectionLimitingPoolTest extends AsyncTestCase
         }
     }
 
-    private function createMockConnection(Request $request): Connection
+    private function createMockConnection(Request $request): Connection&MockObject
     {
         $response = new Response('1.1', 200, null, [], new ReadableBuffer, $request, Future::complete(new Trailers([])));
 
