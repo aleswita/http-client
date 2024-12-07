@@ -16,11 +16,8 @@ final class RetryRequests implements ApplicationInterceptor
     use ForbidCloning;
     use ForbidSerialization;
 
-    private int $retryLimit;
-
-    public function __construct(int $retryLimit)
+    public function __construct(private readonly int $retryLimit)
     {
-        $this->retryLimit = $retryLimit;
     }
 
     public function request(

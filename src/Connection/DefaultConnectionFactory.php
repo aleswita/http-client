@@ -18,14 +18,13 @@ use function Amp\now;
 
 final class DefaultConnectionFactory implements ConnectionFactory
 {
-    private ?Socket\SocketConnector $connector;
+    private readonly ConnectContext $connectContext;
 
-    private ?ConnectContext $connectContext;
-
-    public function __construct(?Socket\SocketConnector $connector = null, ?ConnectContext $connectContext = null)
-    {
-        $this->connector = $connector;
-        $this->connectContext = $connectContext;
+    public function __construct(
+        private readonly ?Socket\SocketConnector $connector = null,
+        ?ConnectContext $connectContext = null,
+    ) {
+        $this->connectContext = $connectContext ?? new ConnectContext();
     }
 
     public function create(Request $request, Cancellation $cancellation): Connection
@@ -33,7 +32,7 @@ final class DefaultConnectionFactory implements ConnectionFactory
         $connectStart = now();
 
         $connector = $this->connector ?? Socket\socketConnector();
-        $connectContext = $this->connectContext ?? new ConnectContext;
+        $connectContext = $this->connectContext;
 
         $uri = $request->getUri();
         $scheme = $uri->getScheme();

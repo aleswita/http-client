@@ -13,21 +13,14 @@ final class InterceptedHttpClient implements DelegateHttpClient
 
     private static \WeakMap $requestInterceptors;
 
-    private DelegateHttpClient $httpClient;
-
-    private ApplicationInterceptor $interceptor;
-
-    /** @var EventListener[] */
-    private array $eventListeners;
-
+    /**
+     * @param EventListener[] $eventListeners
+     */
     public function __construct(
-        DelegateHttpClient $httpClient,
-        ApplicationInterceptor $interceptor,
-        array $eventListeners
+        private readonly DelegateHttpClient $httpClient,
+        private readonly ApplicationInterceptor $interceptor,
+        private readonly array $eventListeners,
     ) {
-        $this->httpClient = $httpClient;
-        $this->interceptor = $interceptor;
-        $this->eventListeners = $eventListeners;
     }
 
     public function request(Request $request, Cancellation $cancellation): Response
@@ -35,6 +28,7 @@ final class InterceptedHttpClient implements DelegateHttpClient
         return processRequest($request, $this->eventListeners, function () use ($request, $cancellation) {
             /** @psalm-suppress RedundantPropertyInitializationCheck */
             self::$requestInterceptors ??= new \WeakMap();
+
             $requestInterceptors = self::$requestInterceptors[$request] ?? [];
             $requestInterceptors[] = $this->interceptor;
             self::$requestInterceptors[$request] = $requestInterceptors;

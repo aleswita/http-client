@@ -17,15 +17,11 @@ class ModifyResponse implements NetworkInterceptor, ApplicationInterceptor
     use ForbidCloning;
     use ForbidSerialization;
 
-    /** @var \Closure(Response):Response */
-    private \Closure $mapper;
-
     /**
      * @param \Closure(Response):Response $mapper
      */
-    public function __construct(\Closure $mapper)
+    public function __construct(private readonly \Closure $mapper)
     {
-        $this->mapper = $mapper;
     }
 
     final public function requestViaNetwork(

@@ -69,8 +69,6 @@ final class Http1Connection implements Connection
     /** @var list<\Closure():void>|null */
     private ?array $onClose = [];
 
-    private float $timeoutGracePeriod;
-
     private float $lastUsedAt;
 
     private bool $explicitTimeout = false;
@@ -87,13 +85,12 @@ final class Http1Connection implements Connection
         Socket $socket,
         private readonly float $connectDuration,
         private readonly ?float $tlsHandshakeDuration,
-        float $timeoutGracePeriod = 2
+        private readonly float $timeoutGracePeriod = 2,
     ) {
         $this->socket = $socket;
         $this->localAddress = $socket->getLocalAddress();
         $this->remoteAddress = $socket->getRemoteAddress();
         $this->tlsInfo = $socket->getTlsInfo();
-        $this->timeoutGracePeriod = $timeoutGracePeriod;
         $this->lastUsedAt = now();
         $this->watchIdleConnection();
     }

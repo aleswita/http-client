@@ -10,12 +10,17 @@ use Amp\Http\Client\ParseException;
 use Amp\Http\Client\Request;
 use Amp\Http\Client\Response;
 use Amp\Http\Http1\Rfc7230;
+use Amp\Http\HttpMessage;
 use Amp\Http\HttpStatus;
 use Amp\Http\InvalidHeaderException;
 use function Amp\Http\Client\events;
 use function Amp\Http\mapHeaderPairs;
 
-/** @internal */
+/**
+ * @internal
+ *
+ * @psalm-import-type HeaderMapType from HttpMessage
+ */
 final class Http1Parser
 {
     use ForbidSerialization;
@@ -33,10 +38,6 @@ final class Http1Parser
     public const BODY_CHUNKS = 3;
     public const TRAILERS_START = 4;
     public const TRAILERS = 5;
-
-    private Request $request;
-
-    private Stream $stream;
 
     private ?Response $response = null;
 
@@ -57,26 +58,20 @@ final class Http1Parser
 
     private bool $complete = false;
 
-    private int $maxHeaderBytes;
+    private readonly int $maxHeaderBytes;
 
-    private int $maxBodyBytes;
+    private readonly int $maxBodyBytes;
 
-    /** @var callable */
-    private $bodyDataCallback;
-
-    /** @var callable */
-    private $trailersCallback;
-
+    /**
+     * @param \Closure(string):void $bodyDataCallback
+     * @param \Closure(HeaderMapType):void $trailersCallback
+     */
     public function __construct(
-        Request $request,
-        Stream $stream,
-        callable $bodyDataCallback,
-        callable $trailersCallback,
+        private readonly Request $request,
+        private readonly Stream $stream,
+        private readonly \Closure $bodyDataCallback,
+        private readonly \Closure $trailersCallback,
     ) {
-        $this->request = $request;
-        $this->stream = $stream;
-        $this->bodyDataCallback = $bodyDataCallback;
-        $this->trailersCallback = $trailersCallback;
         $this->maxHeaderBytes = $request->getHeaderSizeLimit();
         $this->maxBodyBytes = $request->getBodySizeLimit();
     }

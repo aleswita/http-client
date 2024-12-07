@@ -42,8 +42,6 @@ final class ConnectionLimitingPool implements ConnectionPool
         return $scheme . '://' . $authority;
     }
 
-    private int $connectionLimit;
-
     private ConnectionFactory $connectionFactory;
 
     /** @var array<string, \ArrayObject<int, Future<Connection>>> */
@@ -67,14 +65,13 @@ final class ConnectionLimitingPool implements ConnectionPool
 
     private int $openConnectionCount = 0;
 
-    private function __construct(int $connectionLimit, ?ConnectionFactory $connectionFactory = null)
+    private function __construct(private readonly int $connectionLimit, ?ConnectionFactory $connectionFactory = null)
     {
         if ($connectionLimit < 1) {
             throw new \Error('The connection limit must be greater than 0');
         }
 
-        $this->connectionLimit = $connectionLimit;
-        $this->connectionFactory = $connectionFactory ?? new DefaultConnectionFactory;
+        $this->connectionFactory = $connectionFactory ?? new DefaultConnectionFactory();
     }
 
     public function __clone()

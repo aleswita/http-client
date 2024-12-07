@@ -21,13 +21,10 @@ final class InterceptedStream implements Stream
 
     private static \WeakMap $requestInterceptors;
 
-    private Stream $stream;
-
     private ?NetworkInterceptor $interceptor;
 
-    public function __construct(Stream $stream, NetworkInterceptor $interceptor)
+    public function __construct(private readonly Stream $stream, NetworkInterceptor $interceptor)
     {
-        $this->stream = $stream;
         $this->interceptor = $interceptor;
     }
 
@@ -37,13 +34,13 @@ final class InterceptedStream implements Stream
     public function request(Request $request, Cancellation $cancellation): Response
     {
         return processRequest($request, [], function () use ($request, $cancellation): Response {
-            if (!$this->interceptor) {
+            $interceptor = $this->interceptor;
+            $this->interceptor = null;
+
+            if (!$interceptor) {
                 throw new \Error(__METHOD__ . ' may only be invoked once per instance. '
                     . 'If you need to implement retries or otherwise issue multiple requests, register an ApplicationInterceptor to do so.');
             }
-
-            $interceptor = $this->interceptor;
-            $this->interceptor = null;
 
             /** @psalm-suppress RedundantPropertyInitializationCheck */
             self::$requestInterceptors ??= new \WeakMap();

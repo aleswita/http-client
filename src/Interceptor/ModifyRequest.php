@@ -17,15 +17,11 @@ class ModifyRequest implements NetworkInterceptor, ApplicationInterceptor
     use ForbidCloning;
     use ForbidSerialization;
 
-    /** @var \Closure(Request):(Request|null) */
-    private \Closure $mapper;
-
     /**
      * @param \Closure(Request):(Request|null) $mapper
      */
-    public function __construct(\Closure $mapper)
+    public function __construct(private readonly \Closure $mapper)
     {
-        $this->mapper = $mapper;
     }
 
     final public function requestViaNetwork(

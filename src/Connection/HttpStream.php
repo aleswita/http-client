@@ -12,66 +12,73 @@ use Amp\Socket\SocketAddress;
 use Amp\Socket\TlsInfo;
 use function Amp\Http\Client\processRequest;
 
+/**
+ * @psalm-type RequestCallbackType = callable(Request, Cancellation, HttpStream):Response
+ * @psalm-type ReleaseCallbackType = callable():void
+ */
 final class HttpStream implements Stream
 {
     use ForbidSerialization;
     use ForbidCloning;
 
+    /**
+     * @param RequestCallbackType $RequestCallbackType
+     * @param ReleaseCallbackType $ReleaseCallbackType
+     */
     public static function fromConnection(
         Connection $connection,
-        callable $requestCallback,
-        callable $releaseCallback
+        callable $RequestCallbackType,
+        callable $ReleaseCallbackType
     ): self {
         return new self(
             $connection->getLocalAddress(),
             $connection->getRemoteAddress(),
             $connection->getTlsInfo(),
-            $requestCallback,
-            $releaseCallback
+            $RequestCallbackType,
+            $ReleaseCallbackType,
         );
     }
 
-    public static function fromStream(Stream $stream, callable $requestCallback, callable $releaseCallback): self
+    /**
+     * @param RequestCallbackType $RequestCallbackType
+     * @param ReleaseCallbackType $ReleaseCallbackType
+     */
+    public static function fromStream(Stream $stream, callable $RequestCallbackType, callable $ReleaseCallbackType): self
     {
         return new self(
             $stream->getLocalAddress(),
             $stream->getRemoteAddress(),
             $stream->getTlsInfo(),
-            $requestCallback,
-            $releaseCallback
+            $RequestCallbackType,
+            $ReleaseCallbackType,
         );
     }
 
-    private SocketAddress $localAddress;
-
-    private SocketAddress $remoteAddress;
-
-    private ?TlsInfo $tlsInfo;
-
     /** @var callable */
-    private $requestCallback;
+    private $RequestCallbackType;
 
     /** @var callable|null */
-    private $releaseCallback;
+    private $ReleaseCallbackType;
 
+    /**
+     * @param RequestCallbackType $RequestCallbackType
+     * @param ReleaseCallbackType $ReleaseCallbackType
+     */
     private function __construct(
-        SocketAddress $localAddress,
-        SocketAddress $remoteAddress,
-        ?TlsInfo $tlsInfo,
-        callable $requestCallback,
-        callable $releaseCallback
+        private readonly SocketAddress $localAddress,
+        private readonly SocketAddress $remoteAddress,
+        private readonly ?TlsInfo $tlsInfo,
+        callable $RequestCallbackType,
+        callable $ReleaseCallbackType,
     ) {
-        $this->localAddress = $localAddress;
-        $this->remoteAddress = $remoteAddress;
-        $this->tlsInfo = $tlsInfo;
-        $this->requestCallback = $requestCallback;
-        $this->releaseCallback = $releaseCallback;
+        $this->RequestCallbackType = $RequestCallbackType;
+        $this->ReleaseCallbackType = $ReleaseCallbackType;
     }
 
     public function __destruct()
     {
-        if ($this->releaseCallback !== null) {
-            ($this->releaseCallback)();
+        if ($this->ReleaseCallbackType !== null) {
+            ($this->ReleaseCallbackType)();
         }
     }
 
@@ -80,13 +87,13 @@ final class HttpStream implements Stream
      */
     public function request(Request $request, Cancellation $cancellation): Response
     {
-        if ($this->releaseCallback === null) {
+        if ($this->ReleaseCallbackType === null) {
             throw new \Error('A stream may only be used for a single request');
         }
 
-        $this->releaseCallback = null;
+        $this->ReleaseCallbackType = null;
 
-        return processRequest($request, [], fn (): Response => ($this->requestCallback)($request, $cancellation, $this));
+        return processRequest($request, [], fn (): Response => ($this->RequestCallbackType)($request, $cancellation, $this));
     }
 
     public function getLocalAddress(): SocketAddress

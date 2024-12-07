@@ -17,7 +17,7 @@ final class DecompressResponse implements NetworkInterceptor
     use ForbidCloning;
     use ForbidSerialization;
 
-    private bool $hasZlib;
+    private readonly bool $hasZlib;
 
     public function __construct()
     {

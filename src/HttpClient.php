@@ -11,15 +11,13 @@ use Amp\NullCancellation;
  */
 final class HttpClient implements DelegateHttpClient
 {
-    private DelegateHttpClient $httpClient;
-
-    /** @var EventListener[] */
-    private array $eventListeners;
-
-    public function __construct(DelegateHttpClient $httpClient, array $eventListeners)
-    {
-        $this->httpClient = $httpClient;
-        $this->eventListeners = $eventListeners;
+    /**
+     * @param EventListener[] $eventListeners
+     */
+    public function __construct(
+        private readonly DelegateHttpClient $httpClient,
+        private readonly array $eventListeners,
+    ) {
     }
 
     /**
@@ -32,7 +30,7 @@ final class HttpClient implements DelegateHttpClient
         return processRequest(
             $request,
             $this->eventListeners,
-            fn () => $this->httpClient->request($request, $cancellation ?? new NullCancellation())
+            fn () => $this->httpClient->request($request, $cancellation ?? new NullCancellation()),
         );
     }
 }

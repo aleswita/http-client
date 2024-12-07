@@ -19,27 +19,26 @@ final class MatchOrigin implements ApplicationInterceptor
     use ForbidSerialization;
 
     /** @var ApplicationInterceptor[] */
-    private array $originMap = [];
-
-    private ?ApplicationInterceptor $default;
+    private readonly array $originMap;
 
     /**
      * @param ApplicationInterceptor[] $originMap
      *
      * @throws HttpException
      */
-    public function __construct(array $originMap, ?ApplicationInterceptor $default = null)
+    public function __construct(array $originMap, private readonly ?ApplicationInterceptor $default = null)
     {
+        $validatedMap = [];
         foreach ($originMap as $origin => $interceptor) {
             if (!$interceptor instanceof ApplicationInterceptor) {
                 $type = \get_debug_type($interceptor);
                 throw new HttpException('Origin map must be a map from origin to ApplicationInterceptor, got ' . $type);
             }
 
-            $this->originMap[$this->checkOrigin($origin)] = $interceptor;
+            $validatedMap[$this->checkOrigin($origin)] = $interceptor;
         }
 
-        $this->default = $default;
+        $this->originMap = $validatedMap;
     }
 
     public function request(

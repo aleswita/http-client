@@ -105,9 +105,9 @@ final class FollowRedirects implements ApplicationInterceptor
         return self::removeDotSegments(\implode('/', $parts));
     }
 
-    private int $maxRedirects;
+    private readonly int $maxRedirects;
 
-    private bool $autoReferrer;
+    private readonly bool $autoReferrer;
 
     public function __construct(int $limit, bool $autoReferrer = true)
     {
