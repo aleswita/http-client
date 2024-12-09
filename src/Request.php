@@ -10,6 +10,7 @@ use Amp\Http\Client\Internal\Phase;
 use Amp\Http\HttpMessage;
 use Amp\Http\HttpRequest;
 use League\Uri;
+use League\Uri\UriString;
 use Psr\Http\Message\UriInterface;
 use function Amp\async;
 
@@ -538,7 +539,6 @@ final class Request extends HttpRequest
 
     private function createUriFromString(string $uri): UriInterface
     {
-        /** @psalm-suppress DeprecatedMethod */
-        return Uri\Http::createFromString($uri);
+        return Uri\Http::fromComponents(UriString::parse($uri));
     }
 }
